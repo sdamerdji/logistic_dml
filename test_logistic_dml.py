@@ -6,6 +6,7 @@ from logistic_dml import *
 
 class TestSplit(unittest.TestCase):
     def test_split(self):
+        np.random.seed(0)
         K = 3
         input_array = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
         actual = split(K, input_array)
@@ -24,11 +25,12 @@ class TestSplit(unittest.TestCase):
 
 class TestL(unittest.TestCase):
     def test_L(self):
+        np.random.seed(0)
         # Test case with binary R
         R = np.array([0, 1, 1, 0, 1])
         C = pd.DataFrame({'X1': [1, 4, 7, 10, 13], 'X2': [2, 5, 8, 11, 14], 'X3': [3, 6, 9, 12, 15]})
         Ctest = pd.DataFrame({'X1': [16, 19], 'X2': [17, 20], 'X3': [18, 21]})
-        model = LogisticRegression(random_state=42)
+        model = 'logreg'
         expected = np.array([0.85, 0.9])
         np.testing.assert_allclose(np.round(L(R, C, model, Ctest), 2), expected, rtol=1e-6)
 
@@ -36,7 +38,7 @@ class TestL(unittest.TestCase):
         R = np.array([0.2, 0.5, 0.8])
         C = pd.DataFrame({'X1': [1, 3, 5], 'X2': [2, 4, 6]})
         Ctest = pd.DataFrame({'X1': [7, 9], 'X2': [8, 10]})
-        model = LinearRegression()
+        model = 'linreg'
         expected = np.array([1.1, 1.4])
         np.testing.assert_allclose(np.round(L(R, C, model, Ctest), 2), expected, rtol=1e-6)
 
@@ -55,13 +57,16 @@ class TestLogit(unittest.TestCase):
         with np.testing.assert_raises(ValueError):
             logit(x)
 
+
 class TestDML(unittest.TestCase):
     def test_DML(self):
-        Y = np.array([1, 0, 0, 1, 1, 0, 1, 0, 1, 0])
-        A = np.array([2, 1, 0, 1, 2, 0, 2, 1, 2, 0])
-        X = pd.DataFrame({'X1': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 'X2': [11, 12, 13, 14, 15, 16, 17, 18, 19, 20]})
-        K = 3
-        model = LogisticRegression(random_state=42)
+        np.random.seed(0)
+        Y = np.array([1, 0, 1, 1, 0, 0, 1, 0, 1, 0]*2)
+        A = np.array([1, 1, 0, 1, 0, 0, 1, 0, 1, 1]*2)
+        X = pd.DataFrame({'X1': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]*2,
+                          'X2': [11, 12, 13, 14, 15, 16, 17, 18, 19, 20]*2})
+        K = 2
+        model = 'logreg'
         expected_keys = ['mXp', 'rXp']
         expected_mXp_shape = (10,)
         expected_rXp_shape = (10,)
@@ -71,5 +76,43 @@ class TestDML(unittest.TestCase):
         self.assertEqual(actual['mXp'].shape, expected_mXp_shape)
         self.assertEqual(actual['rXp'].shape, expected_rXp_shape)
 
+
+class TestEstimate(unittest.TestCase):
+    def test_estimate(self):
+        """Nb: This unit test replicates a unit test in R."""
+        Y = np.array([1, 0, 1, 1, 0])
+        A = np.array([2.3, 1.2, 3.4, 2.1, 1.8])
+
+        dml = {
+            'mXp': [0.2, 0.3, 0.1, 0.4, 0.3],
+            'rXp': [0.5, 0.4, 0.6, 0.3, 0.2]
+        }
+
+        actual = Estimate(Y, A, dml)
+        self.assertAlmostEqual(actual, 0.29689899)
+
+
+class TestBootstrap(unittest.TestCase):
+    def test_bootstrap(self):
+        """Nb: This unit test replicates a unit test in R."""
+        np.random.seed(0)
+        Y = np.array([1, 0, 0, 1, 1])
+        A = np.array([2, 1, 0, 1, 2])
+
+        dml = {
+            'rXp': [.9, 0, 0.9, 0.8, 0.1],
+            'mXp': [.4, 0, .6, .4, 0]
+        }
+
+        actual = Bootstrap(Y, A, dml, 2000)
+        lb, ub = actual[0], actual[1]
+        mean = actual[2]
+        sd = actual[3]
+        self.assertLess(mean, 0.9)
+        self.assertGreater(mean, 0.7)
+        self.assertLess(sd, 0.6)
+        self.assertGreater(sd, 0.4)
+        
+        
 if __name__ == '__main__':
     unittest.main()

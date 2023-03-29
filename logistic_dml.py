@@ -8,7 +8,7 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import log_loss
 from scipy.optimize import root_scalar
 from statsmodels.discrete.discrete_model import Logit
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, LogisticRegression
 from numpy.random import default_rng
 
 
@@ -41,31 +41,55 @@ def L(R, C, givenEstimator, Ctest):
     :param Ctest: dataframe of test data
     :return: predictions on Ctest
     """
-    data = pd.concat([pd.Series(R), C], axis=1)
-    data.columns = ['R'] + list(C.columns)
+    data = C.copy()
+    data['R'] = R
 
     # Using 5-fold to tune parameter for the machine learning model
     tt = len(pd.unique(R))
 
     # Fit the model. Original R code allows for hyperparameter search here, but is that fastest?
-    givenEstimator.fit(data.iloc[:, 1:], data['R'])
+    if givenEstimator == 'logreg':
+        estimator = LogisticRegression()
+    elif givenEstimator == 'linreg':
+        estimator = LinearRegression()
+    else:
+        raise ValueError
+    estimator.fit(data.drop('R', axis=1), data['R'])
 
     if tt == 2:
-        Rtest = givenEstimator.predict_proba(Ctest)[:, 1]
+        Rtest = estimator.predict_proba(Ctest)[:, 1]
     else:
-        Rtest = givenEstimator.predict(Ctest)
+        Rtest = estimator.predict(Ctest)
 
     return Rtest
 
 
 def Lr0(Y, A, X, K, givenEstimator, Xtest):
     n = len(Y)
-    I2 = split(K, n)
+    I2 = split(K, X)
     Mp = np.zeros(n)
     ap = np.zeros(n)
+    aBar = np.zeros(Xtest.shape[0])
+
+    for j in range(1, K + 1):
+        idNj = (I2 != j)
+        idj = (I2 == j)
+
+        # Fit hat_M^{-k,-j} = L(Y,(A,X); {-k,-j})
+        df = X.copy()
+        df['A'] = A
+        Mp[idj] = L(Y[idNj],
+                    df[idNj],
+                    givenEstimator,
+                    df[idj])
+
+        # Fit hat_a^{-k,-j} = L(A,X; {-k,-j})
+        atemp = L(A[idNj], X[idNj], givenEstimator, np.concatenate((X[idj], Xtest), axis=0))
+        ap[idj] = atemp[0:sum(idj), ]
+        aBar = aBar + atemp[sum(idj):, ]
+
     # Equation (3.8): aBar:= hat_a^{-k}(X^{k}) = 1/K sum_{j=1}^K hat_a^{-k,-j}(X^{k})
     aBar = aBar / K
-
     if np.sum(np.isinf(Mp)) > 0:
         print('Infinite in Mp')
 
@@ -86,7 +110,7 @@ def Lr0(Y, A, X, K, givenEstimator, Xtest):
     # Defined in Equation (3.8)
     rNk = tNk - betaNk * aBar
 
-    return (rNk)
+    return rNk
 
 
 def DML(Y, A, X, K, givenEstimator):
@@ -108,7 +132,7 @@ def DML(Y, A, X, K, givenEstimator):
     n = len(Y)
     mXp = np.zeros(n)
     rXp = np.zeros(n)
-    I1 = split(K, n)
+    I1 = split(K, Y)
 
     for k in range(1, K + 1):
         idNk0 = (I1 != k) & (Y == 0)
@@ -117,11 +141,11 @@ def DML(Y, A, X, K, givenEstimator):
 
         # Fit hat_m^{-k} = L(A,X;{-k} cap {Y==0})
         # Then obtain hat_m^{-k}(X^{-k})
-        mXp[idk] = L(A[idNk0], X[idNk0, :], givenEstimator, X[idk, :])
+        mXp[idk] = L(A[idNk0], X[idNk0], givenEstimator, X[idk])
 
         # Estimate hat_r^{-k} by Y^{-k}, A^{-k}, X^{-k}
         # Then obtain hat_r^{-k}(X^{k})
-        rXp[idk] = Lr0(Y[idNk], A[idNk], X[idNk, :], K, givenEstimator, X[idk, :])
+        rXp[idk] = Lr0(Y[idNk], A[idNk], X[idNk], K, givenEstimator, X[idk])
 
     return {'mXp': mXp, 'rXp': rXp}
 
@@ -144,7 +168,7 @@ def Bootstrap(Y, A, dml, B=1000):
     resA = A - dml['mXp']
     Betas = np.zeros(B)
     for b in range(B):
-        e = np.random.normal(size=len(Y))
+        e = np.random.normal(size=len(Y), loc=1, scale=1)
         C = np.sum(e * resA * (1 - Y) * np.exp(dml['rXp']))
 
         def g(beta):
@@ -152,11 +176,16 @@ def Bootstrap(Y, A, dml, B=1000):
 
         lo = 0
         up = 2
-        beta0 = root_scalar(g, bracket=[lo, up]).root
+        try:
+            beta0 = root_scalar(g, bracket=[lo, up], method='brentq').root
+        except ValueError:
+            beta0 = 0
         Betas[b] = beta0
 
-    return np.concatenate(
-        (np.quantile(Betas[Betas != 0], [0.025, 0.975]), np.mean(Betas[Betas != 0]), np.std(Betas[Betas != 0])))
+    validBetas = Betas[Betas != 0]
+    return np.concatenate((np.quantile(validBetas, [0.025, 0.975]),
+                           [np.mean(validBetas)],
+                           [np.std(validBetas)]))
 
 
 def logit(x):
