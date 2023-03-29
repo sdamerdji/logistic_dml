@@ -59,7 +59,27 @@ class TestLogit(unittest.TestCase):
 
 
 class TestDML(unittest.TestCase):
-    def test_DML(self):
+    def test_DML_linear_regression(self):
+        np.random.seed(0)
+        Y = np.array([1, 0, 1, 1, 0, 0, 1, 0, 1, 0]*2)
+        A = np.array([1, 1, 0, 1, 0, 0, 1, 0, 1, 1]*2)
+        X = pd.DataFrame({'X1': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]*2,
+                          'X2': [11, 12, 13, 14, 15, 16, 17, 18, 19, 20]*2})
+        K = 2
+        model = 'linreg'
+        expected_keys = ['mXp', 'rXp']
+        expected_mXp_shape = (20,)
+        expected_rXp_shape = (20,)
+        actual = DML(Y, A, X, K, model)
+        self.assertIsInstance(actual, dict)
+        self.assertEqual(sorted(actual.keys()), expected_keys)
+        self.assertEqual(actual['mXp'].shape, expected_mXp_shape)
+        self.assertEqual(actual['rXp'].shape, expected_rXp_shape)
+
+    def test_DML_logistic_regression(self):
+        """The following test fails and it would fail for the R code if Liu et al used logistic
+        regression in their code. Perhaps logistic regression should not be used to fit Wp values
+        """
         np.random.seed(0)
         Y = np.array([1, 0, 1, 1, 0, 0, 1, 0, 1, 0]*2)
         A = np.array([1, 1, 0, 1, 0, 0, 1, 0, 1, 1]*2)
@@ -68,8 +88,8 @@ class TestDML(unittest.TestCase):
         K = 2
         model = 'logreg'
         expected_keys = ['mXp', 'rXp']
-        expected_mXp_shape = (10,)
-        expected_rXp_shape = (10,)
+        expected_mXp_shape = (20,)
+        expected_rXp_shape = (20,)
         actual = DML(Y, A, X, K, model)
         self.assertIsInstance(actual, dict)
         self.assertEqual(sorted(actual.keys()), expected_keys)

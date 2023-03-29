@@ -56,7 +56,7 @@ def L(R, C, givenEstimator, Ctest):
         raise ValueError
     estimator.fit(data.drop('R', axis=1), data['R'])
 
-    if tt == 2:
+    if tt == 2 and givenEstimator == 'logreg':
         Rtest = estimator.predict_proba(Ctest)[:, 1]
     else:
         Rtest = estimator.predict(Ctest)
@@ -84,7 +84,10 @@ def Lr0(Y, A, X, K, givenEstimator, Xtest):
                     df[idj])
 
         # Fit hat_a^{-k,-j} = L(A,X; {-k,-j})
-        atemp = L(A[idNj], X[idNj], givenEstimator, np.concatenate((X[idj], Xtest), axis=0))
+        atemp = L(A[idNj],
+                  X[idNj],
+                  givenEstimator,
+                  pd.concat((X[idj], Xtest)))
         ap[idj] = atemp[0:sum(idj), ]
         aBar = aBar + atemp[sum(idj):, ]
 
