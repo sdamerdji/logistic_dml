@@ -5,23 +5,23 @@ import numpy as np
 
 
 def L(R, C, givenEstimator, Ctest):
+    """
+    Fit R ~ C by a sklearn machine learning model specified by givenEstimator
+    If R is (0,1), then the output should be probability
+    :param R: numpy array. R can be 0/1 variable or continuous variable
+    :param C: dataframe of training data
+    :param givenEstimator: any model with fit() and, depending on output type,
+     predict() or predict_proba() methods
+    :param Ctest: dataframe of test data
+    :return: predictions on Ctest
+    """
     data = pd.concat([pd.Series(R), C], axis=1)
     data.columns = ['R'] + list(C.columns)
 
     # Using 5-fold to tune parameter for the machine learning model
     tt = len(pd.unique(R))
 
-    # Fit the model
-    '''    
-    if tt == 2 & (givenEstimator in ['svmLinear2']):
-            fit = GridSearchCV(estimator=givenEstimator,
-                               param_grid={'C': [0.01, 0.1, 1, 10, 100, 1000]},
-                               cv=5,
-                               verbose=False)
-            fit.fit(data.iloc[:, 1:], data['R'])
-        else:
-    '''
-
+    # Fit the model. Original R code allows for hyperparameter search here, but is that fastest?
     givenEstimator.fit(data.iloc[:, 1:], data['R'])
 
     if tt == 2:

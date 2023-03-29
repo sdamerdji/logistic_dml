@@ -37,5 +37,6 @@ class TestLogit(unittest.TestCase):
         with np.testing.assert_raises(ValueError):
             logit(x)
 
+
 if __name__ == '__main__':
     unittest.main()
