@@ -2,6 +2,32 @@ import pandas as pd
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 import numpy as np
+import pandas as pd
+from sklearn.model_selection import KFold
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import log_loss
+from scipy.optimize import root_scalar
+from statsmodels.discrete.discrete_model import Logit
+from sklearn.linear_model import LinearRegression
+from numpy.random import default_rng
+
+
+def split(K, input):
+    """
+    #Split 1:input into K sets
+    #randomly split the n samples into K folds
+    #The function is use for cross-fitting
+    :param K:
+    :param input: length of matrix
+    :return:
+    """
+    n = input.shape[0]
+    I1 = np.zeros(n, dtype=int)
+    Newids = default_rng().permutation(n, )
+    m = n // K
+    for i in range(K):
+        I1[Newids[(i * m):(i * m + m)]] = i + 1
+    return I1
 
 
 def L(R, C, givenEstimator, Ctest):
@@ -34,7 +60,7 @@ def L(R, C, givenEstimator, Ctest):
 
 def Lr0(Y, A, X, K, givenEstimator, Xtest):
     n = len(Y)
-    I2 = Split(K, n)
+    I2 = split(K, n)
     Mp = np.zeros(n)
     ap = np.zeros(n)
     # Equation (3.8): aBar:= hat_a^{-k}(X^{k}) = 1/K sum_{j=1}^K hat_a^{-k,-j}(X^{k})
@@ -64,10 +90,25 @@ def Lr0(Y, A, X, K, givenEstimator, Xtest):
 
 
 def DML(Y, A, X, K, givenEstimator):
+    """
+    Fit the model logit(Pr(Y=1|A,X)) = beta0*A + r_0(X)
+    Return a dict, with two keys: 'mXp' and 'rXp'.
+    The value for 'mXp' should be the predictions on k disjoint validation sets where Y is
+     predicted as a function of A and X.
+     The value for 'rXp' should be the predictions on k
+     disjoint validation sets where A is predicted as a function of X.
+
+    :param Y: 1-D numpy array or pandas series for outcome
+    :param A: 1-D numpy array or pandas series for treatment
+    :param X: dataframe for covariates to control for
+    :param K: int, for number of folds to train on
+    :param givenEstimator: the machine learning to be used. Must be a model with fit() and predict() methods, a la sklearn.
+    :return: dict
+    """
     n = len(Y)
     mXp = np.zeros(n)
     rXp = np.zeros(n)
-    I1 = Split(K, n)
+    I1 = split(K, n)
 
     for k in range(1, K + 1):
         idNk0 = (I1 != k) & (Y == 0)
@@ -94,7 +135,7 @@ def Estimate(Y, A, dml):
 
     lo = 0
     up = 2
-    beta0 = optimize.root_scalar(g, bracket=[lo, up]).root
+    beta0 = root_scalar(g, bracket=[lo, up]).root
 
     return beta0
 
@@ -111,7 +152,7 @@ def Bootstrap(Y, A, dml, B=1000):
 
         lo = 0
         up = 2
-        beta0 = optimize.root_scalar(g, bracket=[lo, up]).root
+        beta0 = root_scalar(g, bracket=[lo, up]).root
         Betas[b] = beta0
 
     return np.concatenate(
