@@ -1,8 +1,9 @@
+import math
 import unittest
 import numpy as np
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from logistic_dml import *
-
+from scipy.special import expit
 
 class TestSplit(unittest.TestCase):
     def test_split(self):
@@ -30,17 +31,15 @@ class TestL(unittest.TestCase):
         R = np.array([0, 1, 1, 0, 1])
         C = pd.DataFrame({'X1': [1, 4, 7, 10, 13], 'X2': [2, 5, 8, 11, 14], 'X3': [3, 6, 9, 12, 15]})
         Ctest = pd.DataFrame({'X1': [16, 19], 'X2': [17, 20], 'X3': [18, 21]})
-        model = 'logreg'
         expected = np.array([0.85, 0.9])
-        np.testing.assert_allclose(np.round(L(R, C, model, Ctest), 2), expected, rtol=1e-6)
+        np.testing.assert_allclose(np.round(L(R, C, Ctest, givenClassifier=LogisticRegression()), 2), expected, rtol=1e-6)
 
         # Test case with continuous R
         R = np.array([0.2, 0.5, 0.8])
         C = pd.DataFrame({'X1': [1, 3, 5], 'X2': [2, 4, 6]})
         Ctest = pd.DataFrame({'X1': [7, 9], 'X2': [8, 10]})
-        model = 'linreg'
         expected = np.array([1.1, 1.4])
-        np.testing.assert_allclose(np.round(L(R, C, model, Ctest), 2), expected, rtol=1e-6)
+        np.testing.assert_allclose(np.round(L(R, C, Ctest, givenRegressor=LinearRegression()), 2), expected, rtol=1e-6)
 
 
 class TestLogit(unittest.TestCase):
@@ -66,11 +65,12 @@ class TestDML(unittest.TestCase):
         X = pd.DataFrame({'X1': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]*2,
                           'X2': [11, 12, 13, 14, 15, 16, 17, 18, 19, 20]*2})
         K = 2
-        model = 'linreg'
+        model1 = LogisticRegression()
+        model2 = LinearRegression()
         expected_keys = ['mXp', 'rXp']
         expected_mXp_shape = (20,)
         expected_rXp_shape = (20,)
-        actual = DML(Y, A, X, K, model)
+        actual = DML(Y, A, X, K, givenClassifier=model1, givenRegressor=model2)
         self.assertIsInstance(actual, dict)
         self.assertEqual(sorted(actual.keys()), expected_keys)
         self.assertEqual(actual['mXp'].shape, expected_mXp_shape)
@@ -86,11 +86,12 @@ class TestDML(unittest.TestCase):
         X = pd.DataFrame({'X1': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]*2,
                           'X2': [11, 12, 13, 14, 15, 16, 17, 18, 19, 20]*2})
         K = 2
-        model = 'logreg'
+        model1 = LogisticRegression()
+        model2 = LinearRegression()
         expected_keys = ['mXp', 'rXp']
         expected_mXp_shape = (20,)
         expected_rXp_shape = (20,)
-        actual = DML(Y, A, X, K, model)
+        actual = DML(Y, A, X, K, givenClassifier=model1, givenRegressor=model2)
         self.assertIsInstance(actual, dict)
         self.assertEqual(sorted(actual.keys()), expected_keys)
         self.assertEqual(actual['mXp'].shape, expected_mXp_shape)
@@ -120,8 +121,8 @@ class TestBootstrap(unittest.TestCase):
         A = np.array([2, 1, 0, 1, 2])
 
         dml = {
-            'rXp': [.9, 0, 0.9, 0.8, 0.1],
-            'mXp': [.4, 0, .6, .4, 0]
+            'rXp': [0, 0, 0, 0, 0],
+            'mXp': [0, 0, 0, 0, 0]
         }
 
         actual = Bootstrap(Y, A, dml, 2000)
@@ -132,7 +133,51 @@ class TestBootstrap(unittest.TestCase):
         self.assertGreater(mean, 0.7)
         self.assertLess(sd, 0.6)
         self.assertGreater(sd, 0.4)
-        
-        
+
+    def test_bootstrap_null(self):
+        """Assume treatment has no effect"""
+        np.random.seed(0)
+        b = 250
+        type1errors = 0
+        for i in range(b):
+            Y = np.random.binomial(1, .5, 100)
+            A = np.random.binomial(1, .5, 100)
+
+            dml = {
+                'rXp': [0, 0, 0, 0] * 25,
+                'mXp': [0, 0, 0, 0] * 25
+            }
+            actual = Bootstrap(Y, A, dml, 250)
+            lb, ub = actual[0], actual[1]
+            if not (lb <= 0 <= ub):
+                type1errors += 1
+        self.assertLess(type1errors, b * 0.05 + 1)
+        self.assertGreater(type1errors, b * 0.01)
+
+    def test_bootstrap_alt(self):
+        """Assume treatment has effect"""
+        np.random.seed(1)
+        b = 250
+        coverage = 0
+        assertion_errors = 0
+        for i in range(b):
+            beta = 1
+            A = np.random.binomial(1, .5, 20)
+            Y = np.random.binomial(1, expit(beta * A), 20)
+
+            dml = {
+                'rXp': [0, 0, 0, 0]*5,
+                'mXp': [0, 0, 0, 0]*5
+            }
+            try:
+                lb, ub, _, _ = Bootstrap(Y, A, dml, 200)
+                if lb <= beta <= ub:
+                    coverage += 1
+            except AssertionError:
+                assertion_errors += 1
+        self.assertLess(assertion_errors, b * .10)
+        self.assertGreater(coverage, b * .8)
+
+
 if __name__ == '__main__':
     unittest.main()

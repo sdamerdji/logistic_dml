@@ -15,7 +15,7 @@ from numpy.random import default_rng
 def split(K, input):
     """
     #Split 1:input into K sets
-    #randomly split the n samples into K folds
+    #randomly split\ the n samples into K folds
     #The function is use for cross-fitting
     :param K:
     :param input: length of matrix
@@ -30,17 +30,23 @@ def split(K, input):
     return I1
 
 
-def L(R, C, givenEstimator, Ctest):
+def L(R, C, Ctest, givenClassifier=None, givenRegressor=None):
     """
     Fit R ~ C by a sklearn machine learning model specified by givenEstimator
     If R is (0,1), then the output should be probability
     :param R: numpy array. R can be 0/1 variable or continuous variable
     :param C: dataframe of training data
-    :param givenEstimator: any model with fit() and, depending on output type,
-     predict() or predict_proba() methods
     :param Ctest: dataframe of test data
+    :param givenClassifier: any model with fit() and predict_proba() method
+    :param givenRegressor: any model with fit() and predict() method
+
     :return: predictions on Ctest
     """
+    assert isinstance(R, np.ndarray)
+    assert isinstance(C, pd.DataFrame)
+    assert isinstance(Ctest, pd.DataFrame)
+    assert givenClassifier is not None or givenRegressor is not None
+
     data = C.copy()
     data['R'] = R
 
@@ -48,23 +54,17 @@ def L(R, C, givenEstimator, Ctest):
     tt = len(pd.unique(R))
 
     # Fit the model. Original R code allows for hyperparameter search here, but is that fastest?
-    if givenEstimator == 'logreg':
-        estimator = LogisticRegression()
-    elif givenEstimator == 'linreg':
-        estimator = LinearRegression()
+    if tt == 2:
+        givenClassifier.fit(data.drop('R', axis=1), data['R'])
+        Rtest = givenClassifier.predict_proba(Ctest)[:, 1]
     else:
-        raise ValueError
-    estimator.fit(data.drop('R', axis=1), data['R'])
-
-    if tt == 2 and givenEstimator == 'logreg':
-        Rtest = estimator.predict_proba(Ctest)[:, 1]
-    else:
-        Rtest = estimator.predict(Ctest)
+        givenRegressor.fit(data.drop('R', axis=1), data['R'])
+        Rtest = givenRegressor.predict(Ctest)
 
     return Rtest
 
 
-def Lr0(Y, A, X, K, givenEstimator, Xtest):
+def Lr0(Y, A, X, K, Xtest, givenClassifier, givenRegressor):
     n = len(Y)
     I2 = split(K, X)
     Mp = np.zeros(n)
@@ -80,14 +80,15 @@ def Lr0(Y, A, X, K, givenEstimator, Xtest):
         df['A'] = A
         Mp[idj] = L(Y[idNj],
                     df[idNj],
-                    givenEstimator,
-                    df[idj])
+                    df[idj],
+                    givenClassifier=givenClassifier)
 
         # Fit hat_a^{-k,-j} = L(A,X; {-k,-j})
         atemp = L(A[idNj],
                   X[idNj],
-                  givenEstimator,
-                  pd.concat((X[idj], Xtest)))
+                  pd.concat((X[idj], Xtest)),
+                  givenClassifier,
+                  givenRegressor)
         ap[idj] = atemp[0:sum(idj), ]
         aBar = aBar + atemp[sum(idj):, ]
 
@@ -108,7 +109,7 @@ def Lr0(Y, A, X, K, givenEstimator, Xtest):
     betaNk = np.sum(Ares2 * Wp) / np.sum(Ares2 ** 2)
 
     # t^{-k} = L(W,X;{-k}); tNk = t^{-k}(X^{k})
-    tNk = L(Wp, X, givenEstimator, Xtest)
+    tNk = L(Wp, X, Xtest, givenRegressor=givenRegressor)
 
     # Defined in Equation (3.8)
     rNk = tNk - betaNk * aBar
@@ -116,7 +117,7 @@ def Lr0(Y, A, X, K, givenEstimator, Xtest):
     return rNk
 
 
-def DML(Y, A, X, K, givenEstimator):
+def DML(Y, A, X, K, givenClassifier, givenRegressor):
     """
     Fit the model logit(Pr(Y=1|A,X)) = beta0*A + r_0(X)
     Return a dict, with two keys: 'mXp' and 'rXp'.
@@ -144,11 +145,11 @@ def DML(Y, A, X, K, givenEstimator):
 
         # Fit hat_m^{-k} = L(A,X;{-k} cap {Y==0})
         # Then obtain hat_m^{-k}(X^{-k})
-        mXp[idk] = L(A[idNk0], X[idNk0], givenEstimator, X[idk])
+        mXp[idk] = L(A[idNk0], X[idNk0], X[idk], givenClassifier, givenRegressor)
 
         # Estimate hat_r^{-k} by Y^{-k}, A^{-k}, X^{-k}
         # Then obtain hat_r^{-k}(X^{k})
-        rXp[idk] = Lr0(Y[idNk], A[idNk], X[idNk], K, givenEstimator, X[idk])
+        rXp[idk] = Lr0(Y[idNk], A[idNk], X[idNk], K, X[idk], givenClassifier, givenRegressor)
 
     return {'mXp': mXp, 'rXp': rXp}
 
@@ -160,8 +161,8 @@ def Estimate(Y, A, dml):
     def g(beta):
         return np.sum(Y * np.exp(-beta * A) * resA) - C
 
-    lo = 0
-    up = 2
+    lo = -5
+    up = 5
     beta0 = root_scalar(g, bracket=[lo, up]).root
 
     return beta0
@@ -169,7 +170,8 @@ def Estimate(Y, A, dml):
 
 def Bootstrap(Y, A, dml, B=1000):
     resA = A - dml['mXp']
-    Betas = np.zeros(B)
+    Betas = []
+    cantSolve = 0
     for b in range(B):
         e = np.random.normal(size=len(Y), loc=1, scale=1)
         C = np.sum(e * resA * (1 - Y) * np.exp(dml['rXp']))
@@ -177,15 +179,20 @@ def Bootstrap(Y, A, dml, B=1000):
         def g(beta):
             return np.sum(e * Y * np.exp(-beta * A) * resA) - C
 
-        lo = 0
-        up = 2
+        # These limits allow Beta to range from multiplier of >100x to <0.01x on odds ratio
+        lo = -5
+        up = 5
         try:
             beta0 = root_scalar(g, bracket=[lo, up], method='brentq').root
+            Betas.append(beta0)
         except ValueError:
-            beta0 = 0
-        Betas[b] = beta0
+            cantSolve += 1
 
-    validBetas = Betas[Betas != 0]
+    #if cantSolve > (0.01 * B):
+    #    print(f'Solver failed to find a solution for {100*cantSolve/B}% bootstraps.'
+    #          f' Consider changing numerical optimization.')
+    assert Betas, "All optimizations failed"
+    validBetas = np.array(Betas)
     return np.concatenate((np.quantile(validBetas, [0.025, 0.975]),
                            [np.mean(validBetas)],
                            [np.std(validBetas)]))
