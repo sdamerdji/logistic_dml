@@ -1,15 +1,29 @@
 import pandas as pd
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
-import numpy as np
-import pandas as pd
-from sklearn.model_selection import KFold
-from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import log_loss
 from scipy.optimize import root_scalar
-from statsmodels.discrete.discrete_model import Logit
-from sklearn.linear_model import LinearRegression, LogisticRegression
 from numpy.random import default_rng
+import numpy as np
+
+class DML:
+    def __init__(self, Y, A, X, K, givenClassifier, givenRegressor):
+        self.Y = Y
+        self.A = A
+        self.X = X
+        self.K = K
+        self.givenClassifier = givenClassifier
+        self.givenRegressor = givenRegressor
+        self.dml_result = None
+
+    def train(self):
+        # TODO: Add some way of checking how classifiers and regressors did.
+        result = dml(self.Y, self.A, self.X, self.K,
+                     givenClassifier=self.givenClassifier,
+                     givenRegressor=self.givenRegressor)
+        self.dml_result = result
+
+    def significance_testing(self):
+        assert self.dml_result is not None
+        lb, ub, mean, sd = Bootstrap(self.Y, self.A, self.dml_result, 200)
+        return lb, ub, mean, sd
 
 
 def split(K, input):
@@ -117,7 +131,7 @@ def Lr0(Y, A, X, K, Xtest, givenClassifier, givenRegressor):
     return rNk
 
 
-def DML(Y, A, X, K, givenClassifier, givenRegressor):
+def dml(Y, A, X, K, givenClassifier, givenRegressor):
     """
     Fit the model logit(Pr(Y=1|A,X)) = beta0*A + r_0(X)
     Return a dict, with two keys: 'mXp' and 'rXp'.
