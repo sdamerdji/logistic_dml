@@ -1,8 +1,8 @@
-import math
 import unittest
 import numpy as np
+import pandas as pd
 from sklearn.linear_model import LogisticRegression, LinearRegression
-from logistic_dml import *
+from logistic_dml import split, dml, ml, Lr0, bootstrap, estimate_beta
 from scipy.special import expit
 
 
@@ -33,30 +33,14 @@ class TestL(unittest.TestCase):
         C = pd.DataFrame({'X1': [1, 4, 7, 10, 13], 'X2': [2, 5, 8, 11, 14], 'X3': [3, 6, 9, 12, 15]})
         Ctest = pd.DataFrame({'X1': [16, 19], 'X2': [17, 20], 'X3': [18, 21]})
         expected = np.array([0.85, 0.9])
-        np.testing.assert_allclose(np.round(L(R, C, Ctest, givenClassifier=LogisticRegression()), 2), expected, rtol=1e-6)
+        np.testing.assert_allclose(np.round(ml(R, C, Ctest, classifier=LogisticRegression()), 2), expected, rtol=1e-6)
 
         # Test case with continuous R
         R = np.array([0.2, 0.5, 0.8])
         C = pd.DataFrame({'X1': [1, 3, 5], 'X2': [2, 4, 6]})
         Ctest = pd.DataFrame({'X1': [7, 9], 'X2': [8, 10]})
         expected = np.array([1.1, 1.4])
-        np.testing.assert_allclose(np.round(L(R, C, Ctest, givenRegressor=LinearRegression()), 2), expected, rtol=1e-6)
-
-
-class TestLogit(unittest.TestCase):
-    def test_logit(self):
-        x = np.array([0.5, 0.25, 0.75])
-        expected = np.array([0, -1.0986122886681098, 1.0986122886681098])
-        np.testing.assert_allclose(logit(x), expected)
-
-        x = np.array([-1])
-        with np.testing.assert_raises(ValueError):
-            logit(x)
-
-        x = np.array([2])
-        with np.testing.assert_raises(ValueError):
-            logit(x)
-
+        np.testing.assert_allclose(np.round(ml(R, C, Ctest, regressor=LinearRegression()), 2), expected, rtol=1e-6)
 
 class TestDml(unittest.TestCase):
     def test_dml_linear_regression(self):
@@ -71,7 +55,7 @@ class TestDml(unittest.TestCase):
         expected_keys = ['mXp', 'rXp']
         expected_mXp_shape = (20,)
         expected_rXp_shape = (20,)
-        actual = dml(Y, A, X, K, givenClassifier=model1, givenRegressor=model2)
+        actual = dml(Y, A, X, classifier=model1, regressor=model2, k_folds=K)
         self.assertIsInstance(actual, dict)
         self.assertEqual(sorted(actual.keys()), expected_keys)
         self.assertEqual(actual['mXp'].shape, expected_mXp_shape)
@@ -92,7 +76,7 @@ class TestDml(unittest.TestCase):
         expected_keys = ['mXp', 'rXp']
         expected_mXp_shape = (20,)
         expected_rXp_shape = (20,)
-        actual = dml(Y, A, X, K, givenClassifier=model1, givenRegressor=model2)
+        actual = dml(Y, A, X, classifier=model1, regressor=model2, k_folds=K)
         self.assertIsInstance(actual, dict)
         self.assertEqual(sorted(actual.keys()), expected_keys)
         self.assertEqual(actual['mXp'].shape, expected_mXp_shape)
@@ -110,7 +94,7 @@ class TestEstimate(unittest.TestCase):
             'rXp': [0.5, 0.4, 0.6, 0.3, 0.2]
         }
 
-        actual = Estimate(Y, A, dml)
+        actual = estimate_beta(Y, A, dml)
         self.assertAlmostEqual(actual, 0.29689899)
 
 
@@ -126,7 +110,7 @@ class TestBootstrap(unittest.TestCase):
             'mXp': [0, 0, 0, 0, 0]
         }
 
-        actual = Bootstrap(Y, A, dml, 2000)
+        actual = bootstrap(Y, A, dml, 2000)
         lb, ub = actual[0], actual[1]
         mean = actual[2]
         sd = actual[3]
@@ -148,7 +132,7 @@ class TestBootstrap(unittest.TestCase):
                 'rXp': [0, 0, 0, 0] * 25,
                 'mXp': [0, 0, 0, 0] * 25
             }
-            actual = Bootstrap(Y, A, dml, 250)
+            actual = bootstrap(Y, A, dml, 250)
             lb, ub = actual[0], actual[1]
             if not (lb <= 0 <= ub):
                 type1errors += 1
@@ -171,7 +155,7 @@ class TestBootstrap(unittest.TestCase):
                 'mXp': [0, 0, 0, 0]*5
             }
             try:
-                lb, ub, _, _ = Bootstrap(Y, A, dml, 200)
+                lb, ub, _, _ = bootstrap(Y, A, dml, 200)
                 if lb <= beta <= ub:
                     coverage += 1
             except AssertionError:
