@@ -9,7 +9,7 @@ setup(
 	'pandas>=1.5.2',
 	'scipy>=1.9.3',
 	'numpy>=1.23.5',
-	'sklearn>=0.0.post1',
+    'scikit-learn>=1.3.0',
     ],
     author='damerdji',
     author_email='salim.damerdji@stats.ox.ac.uk',
