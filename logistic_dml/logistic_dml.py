@@ -3,10 +3,12 @@ from scipy.optimize import root_scalar
 from numpy.random import default_rng
 import numpy as np
 from scipy.special import logit
+from sklearn.model_selection import RandomizedSearchCV
 
 
 class DML:
-    def __init__(self, Y=None, A=None, X=None, classifier=None, regressor=None, k_folds=2):
+    def __init__(self, Y=None, A=None, X=None, classifier=None, regressor=None, k_folds=2,
+                 classifier_params=None, regressor_params=None, random_seed=None):
         self.Y = Y
         self.A = A
         self.X = X
@@ -14,6 +16,17 @@ class DML:
         self.classifier = classifier
         self.regressor = regressor
         self.dml_result = None
+        self.classifier_params = classifier_params
+        self.regressor_params = regressor_params
+
+        # M hat predicts Y as function of (A, x)
+        # a hat predicts A as function of X
+        # t predicts logit(M_hat) as function of X
+        self.cv_scores = {'M_hat': [], 'a_hat': [], 't_hat': []}
+        self.cv_results = {'M_hat': [], 'a_hat': [], 't_hat': []}
+
+        self.random_seed = random_seed
+        self.rng = np.random.default_rng(random_seed)
 
     def train(self):
         # TODO: Add some way of checking how classifiers and regressors did.
@@ -26,7 +39,7 @@ class DML:
         return lb, ub, mean, sd
 
     @classmethod
-    def split(cls, k_folds, input):
+    def split(cls, k_folds, input, seed=None):
         """
         #Split 1:input into K sets
         #randomly split the n samples into K folds
@@ -37,13 +50,13 @@ class DML:
         """
         n = input.shape[0]
         result = np.zeros(n, dtype=int)
-        permuted_indices = default_rng().permutation(n, )
+        permuted_indices = default_rng(seed).permutation(n, )
         m = n // k_folds
         for i in range(k_folds):
             result[permuted_indices[(i * m):(i * m + m)]] = i + 1
         return result
 
-    def ml(self, train_response, train_covariates, test_covariates):
+    def ml(self, train_response, train_covariates, test_covariates, save_as=''):
         """
         Fit R ~ C by a sklearn machine learning model specified by classifier or regressors
         If R is (0,1), then the output should be probability
@@ -55,24 +68,45 @@ class DML:
 
         :return: predictions on Ctest
         """
-        assert isinstance(train_response, np.ndarray)
+        assert isinstance(train_response, (np.ndarray, pd.Series))
         assert isinstance(train_covariates, pd.DataFrame)
         assert isinstance(test_covariates, pd.DataFrame)
         assert self.classifier is not None or self.regressor is not None
 
+        if save_as:
+            print('Predicting', save_as)
         data = train_covariates.copy()
         data['R'] = train_response
 
         # Using 5-fold to tune parameter for the machine learning model
         tt = len(pd.unique(train_response))
 
+        unique_values = set(pd.unique(train_response))
+        isClassification = unique_values == {True, False} or unique_values == {0, 1}
+
         # Fit the model. Original R code allows for hyperparameter search here, but is that fastest?
-        if tt == 2:
-            self.classifier.fit(data.drop('R', axis=1), data['R'])
-            test_predictions = self.classifier.predict_proba(test_covariates)[:, 1]
+        if isClassification:
+            if self.classifier_params:
+                classifier = RandomizedSearchCV(self.classifier, self.classifier_params,
+                                                n_jobs=-1, n_iter=2, random_state=self.random_seed)
+            else:
+                classifier = self.classifier
+            classifier.fit(data.drop('R', axis=1), data['R'])
+            test_predictions = classifier.predict_proba(test_covariates)[:, 1]
+            if self.classifier_params:
+                self.cv_scores[save_as].append(classifier.best_score_)
+                self.cv_results[save_as].append(classifier.cv_results_)
         else:
-            self.regressor.fit(data.drop('R', axis=1), data['R'])
-            test_predictions = self.regressor.predict(test_covariates)
+            if self.classifier_params:
+                regressor = RandomizedSearchCV(self.regressor, self.regressor_params,
+                                               n_jobs=-1, n_iter=2, random_state=self.random_seed)
+            else:
+                regressor = self.regressor
+            regressor.fit(data.drop('R', axis=1), data['R'])
+            test_predictions = regressor.predict(test_covariates)
+            if self.regressor_params:
+                self.cv_scores[save_as].append(regressor.best_score_)
+                self.cv_results[save_as].append(regressor.cv_results_)
 
         return test_predictions
 
@@ -84,16 +118,17 @@ class DML:
         aBar = np.zeros(testX.shape[0])
 
         for j in range(1, k_folds + 1):
+            print('Getting predictions for subfold j =', j)
             idNj = (I2 != j)
             idj = (I2 == j)
 
             # Fit hat_M^{-k,-j} = L(Y,(A,X); {-k,-j})
             df = trainX.copy()
             df['A'] = trainA
-            Mp[idj] = self.ml(trainY[idNj], df[idNj], df[idj])
+            Mp[idj] = self.ml(trainY[idNj], df[idNj], df[idj], save_as='M_hat')
 
             # Fit hat_a^{-k,-j} = L(A,X; {-k,-j})
-            atemp = self.ml(trainA[idNj], trainX[idNj], pd.concat((trainX[idj], testX)))
+            atemp = self.ml(trainA[idNj], trainX[idNj], pd.concat((trainX[idj], testX)), save_as='a_hat')
             ap[idj] = atemp[0:sum(idj), ]
             aBar = aBar + atemp[sum(idj):, ]
 
@@ -114,7 +149,7 @@ class DML:
         betaNk = np.sum(Ares2 * Wp) / np.sum(Ares2 ** 2)
 
         # t^{-k} = L(W,X;{-k}); tNk = t^{-k}(X^{k})
-        tNk = self.ml(Wp, trainX, testX)
+        tNk = self.ml(Wp, trainX, testX, save_as='t_hat')
 
         # Defined in Equation (3.8)
         rNk = tNk - betaNk * aBar
@@ -142,13 +177,14 @@ class DML:
         I1 = DML.split(k_folds, Y)
 
         for k in range(1, k_folds + 1):
+            print('Getting predictions for fold k =', k)
             idNk0 = (I1 != k) & (Y == 0)
             idNk = (I1 != k)
             idk = (I1 == k)
 
             # Fit hat_m^{-k} = L(A,X;{-k} cap {Y==0})
             # Then obtain hat_m^{-k}(X^{-k})
-            mXp[idk] = self.ml(A[idNk0], X[idNk0], X[idk])
+            mXp[idk] = self.ml(A[idNk0], X[idNk0], X[idk], save_as='M_hat')
 
             # Estimate hat_r^{-k} by Y^{-k}, A^{-k}, X^{-k}
             # Then obtain hat_r^{-k}(X^{k})
@@ -158,7 +194,8 @@ class DML:
 
     def estimate_beta(self, Y, A, dml):
         resA = A - dml['mXp']
-        C = np.sum(resA * (1 - Y) * np.exp(dml['rXp']))
+        clipped = np.clip(dml['rXp'], -np.inf, 100)
+        C = np.sum(resA * (1 - Y) * np.exp(clipped))
 
         def g(beta):
             return np.sum(Y * np.exp(-beta * A) * resA) - C
@@ -171,18 +208,20 @@ class DML:
 
     def bootstrap(self, Y, A, dml, B=1000):
         resA = A - dml['mXp']
+        clipped = np.clip(dml['rXp'], -np.inf, 50)
         betas = []
         cant_solve = 0
         for b in range(B):
-            e = np.random.normal(size=len(Y), loc=1, scale=1)
-            C = np.sum(e * resA * (1 - Y) * np.exp(dml['rXp']))
+            e = self.rng.normal(size=len(Y), loc=1, scale=1)
+            C = np.sum(e * resA * (1 - Y) * np.exp(clipped))
 
             def g(beta):
                 return np.sum(e * Y * np.exp(-beta * A) * resA) - C
 
-            # These limits allow Beta to range from multiplier of >100x to <0.01x on odds ratio
-            lo = -5
-            up = 5
+            # Limits of [-5, 5] allow Beta to range from multiplier of >100x to <0.01x on odds ratio
+            # I adjust to allow for larger range to allow for shitty modelling
+            lo = -100
+            up = 100
             try:
                 beta0 = root_scalar(g, bracket=[lo, up], method='brentq').root
                 betas.append(beta0)

@@ -44,6 +44,7 @@ class TestML(unittest.TestCase):
         dml = DML(regressor=LinearRegression())
         np.testing.assert_allclose(np.round(dml.ml(R, C, Ctest), 2), expected, rtol=1e-6)
 
+
 class TestDml(unittest.TestCase):
     def test_dml_linear_regression(self):
         np.random.seed(0)
