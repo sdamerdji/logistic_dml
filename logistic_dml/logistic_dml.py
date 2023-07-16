@@ -1,3 +1,4 @@
+import pickle
 import pandas as pd
 from scipy.optimize import root_scalar
 from numpy.random import default_rng
@@ -8,7 +9,8 @@ from sklearn.model_selection import RandomizedSearchCV
 
 class DML:
     def __init__(self, Y=None, A=None, X=None, classifier=None, regressor=None, k_folds=2,
-                 classifier_params=None, regressor_params=None, random_seed=None):
+                 classifier_params=None, regressor_params=None, random_seed=None,
+                 M_hat_classifier=None, a_hat_classifier=None):
         self.Y = Y
         self.A = A
         self.X = X
@@ -27,16 +29,66 @@ class DML:
 
         self.random_seed = random_seed
         self.rng = np.random.default_rng(random_seed)
+        self.beta_hat = None
+        self._bootstrap_lb = None
+        self._bootstrap_ub = None
+        self._bootstrap_mean = None
+        self._bootstrap_sd = None
+        self.p_value = None
+        self.Y_error = None
+        self.A_error = None
+        self.ci = None
+        self.M_hat_classifier = M_hat_classifier
+        self.a_hat_classifier = a_hat_classifier
 
     def train(self):
-        # TODO: Add some way of checking how classifiers and regressors did.
         result = self.dml(self.Y, self.A, self.X, k_folds=self.k_folds)
         self.dml_result = result
+        self.beta_hat = self.estimate_beta(self.Y, self.A, self.dml_result)
+        self.Y_error = np.linalg.norm(self.Y - 1 / (1 + np.exp(-self.beta_hat * self.A - result['rXp'])))
+        self.A_error = np.linalg.norm(self.A[self.Y == 0] - result['mXp'][self.Y == 0])
 
     def significance_testing(self):
         assert self.dml_result is not None
+
         lb, ub, mean, sd = self.bootstrap(self.Y, self.A, self.dml_result, 200)
+        self._bootstrap_lb = lb
+        self._bootstrap_ub = ub
+        self._bootstrap_mean = mean
+        self._bootstrap_sd = sd
         return lb, ub, mean, sd
+
+    def save(self, path):
+        with open(path, 'wb') as f:
+            pickle.dump(self, f)
+
+    def load(self, path):
+        with open(path, 'rb') as f:
+            new = pickle.load(f)
+            self.Y = new.Y
+            self.A = new.A
+            self.X = new.X
+            self.k_folds = new.k_folds
+            self.classifier = new.classifier
+            self.regressor = new.regressor
+            self.dml_result = new.dml_result
+            self.classifier_params = new.classifier_params
+            self.regressor_params = new.regressor_params
+            self.cv_scores = new.cv_scores
+            self.cv_results = new.cv_results
+            self.random_seed = new.random_seed
+            self.rng = new.rng
+            self.beta_hat = new.beta_hat
+            self._bootstrap_lb = new._bootstrap_lb
+            self._bootstrap_ub = new._bootstrap_ub
+            self._bootstrap_mean = new._bootstrap_mean
+            self._bootstrap_sd = new._bootstrap_sd
+            self.p_value = new.p_value
+            self.Y_error = new.Y_error
+            self.A_error = new.A_error
+            self.M_hat_classifier = new.M_hat_classifier
+            self.a_hat_classifier = new.a_hat_classifier
+            self.ci = new.ci
 
     @classmethod
     def split(cls, k_folds, input, seed=None):
@@ -86,20 +138,27 @@ class DML:
 
         # Fit the model. Original R code allows for hyperparameter search here, but is that fastest?
         if isClassification:
-            if self.classifier_params:
+            if save_as == 'M_hat' and self.M_hat_classifier is not None:
+                classifier = self.M_hat_classifier
+                classifier.fit(data.drop('R', axis=1), data['R'])
+            elif save_as == 'a_hat' and self.a_hat_classifier is not None:
+                classifier = self.a_hat_classifier
+                classifier.fit(data.drop('R', axis=1), data['R'])
+            elif self.classifier_params:
                 classifier = RandomizedSearchCV(self.classifier, self.classifier_params,
-                                                n_jobs=-1, n_iter=2, random_state=self.random_seed)
-            else:
-                classifier = self.classifier
-            classifier.fit(data.drop('R', axis=1), data['R'])
-            test_predictions = classifier.predict_proba(test_covariates)[:, 1]
-            if self.classifier_params:
+                                                n_iter=25, random_state=self.rng.integers(100), cv=self.k_folds, n_jobs=5)
+                classifier.fit(data.drop('R', axis=1), data['R'])
                 self.cv_scores[save_as].append(classifier.best_score_)
                 self.cv_results[save_as].append(classifier.cv_results_)
+            else:
+                classifier = self.classifier
+                classifier.fit(data.drop('R', axis=1), data['R'])
+            test_predictions = classifier.predict_proba(test_covariates)[:, 1]
+
         else:
-            if self.classifier_params:
+            if self.regressor_params:
                 regressor = RandomizedSearchCV(self.regressor, self.regressor_params,
-                                               n_jobs=-1, n_iter=2, random_state=self.random_seed)
+                                               n_iter=25, random_state=self.rng.integers(100), cv=self.k_folds, n_jobs=5)
             else:
                 regressor = self.regressor
             regressor.fit(data.drop('R', axis=1), data['R'])
@@ -112,7 +171,7 @@ class DML:
 
     def Lr0(self, trainX, testX, trainA, trainY, k_folds=2):
         n = len(trainY)
-        I2 = DML.split(k_folds, trainX)
+        I2 = DML.split(k_folds, trainX, self.random_seed)
         Mp = np.zeros(n)
         ap = np.zeros(n)
         aBar = np.zeros(testX.shape[0])
@@ -174,7 +233,7 @@ class DML:
         n = len(Y)
         mXp = np.zeros(n)
         rXp = np.zeros(n)
-        I1 = DML.split(k_folds, Y)
+        I1 = DML.split(k_folds, Y, self.random_seed)
 
         for k in range(1, k_folds + 1):
             print('Getting predictions for fold k =', k)
@@ -200,13 +259,13 @@ class DML:
         def g(beta):
             return np.sum(Y * np.exp(-beta * A) * resA) - C
 
-        lo = -5
-        up = 5
+        lo = -1000
+        up = 1000
         beta0 = root_scalar(g, bracket=[lo, up]).root
 
         return beta0
 
-    def bootstrap(self, Y, A, dml, B=1000):
+    def bootstrap(self, Y, A, dml, B=1000, beta_hat=None):
         resA = A - dml['mXp']
         clipped = np.clip(dml['rXp'], -np.inf, 50)
         betas = []
@@ -220,8 +279,8 @@ class DML:
 
             # Limits of [-5, 5] allow Beta to range from multiplier of >100x to <0.01x on odds ratio
             # I adjust to allow for larger range to allow for shitty modelling
-            lo = -100
-            up = 100
+            lo = -1000
+            up = 1000
             try:
                 beta0 = root_scalar(g, bracket=[lo, up], method='brentq').root
                 betas.append(beta0)
@@ -233,6 +292,14 @@ class DML:
         #          f' Consider changing numerical optimization.')
         assert betas, "All optimizations failed"
         betas = np.array(betas)
+
+        if self.beta_hat:
+            beta_hat = self.beta_hat
+
+        if beta_hat:
+            p_value = np.mean(np.abs(betas - np.mean(betas)) > np.abs(beta_hat))
+            self.p_value = p_value
+            self.ci = (beta_hat - 1.96 * np.std(betas), beta_hat + 1.96 * np.std(betas))
         return np.concatenate((np.quantile(betas, [0.025, 0.975]),
                                [np.mean(betas)],
                                [np.std(betas)]))

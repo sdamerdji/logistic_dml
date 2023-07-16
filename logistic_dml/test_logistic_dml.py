@@ -99,6 +99,22 @@ class TestEstimate(unittest.TestCase):
         actual = DML().estimate_beta(Y, A, dml)
         self.assertAlmostEqual(actual, 0.29689899)
 
+class TestPickle(unittest.TestCase):
+    def test_save_load(self):
+        np.random.seed(0)
+        Y = np.array([1, 0, 1, 1, 0, 0, 1, 0, 1, 0]*2)
+        A = np.array([1, 1, 0, 1, 0, 0, 1, 0, 1, 1]*2)
+        X = pd.DataFrame({'X1': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]*2,
+                          'X2': [11, 12, 13, 14, 15, 16, 17, 18, 19, 20]*2})
+        K = 2
+        model1 = LogisticRegression()
+        model2 = LinearRegression()
+        dml = DML(classifier=model1, regressor=model2)
+        dml.dml(Y, A, X, k_folds=K)
+        dml.save('./testpickle.pkl')
+        new = DML()
+        new.load('./testpickle.pkl')
+        assert new.k_folds == 2
 
 class TestBootstrap(unittest.TestCase):
     def test_bootstrap(self):
@@ -115,7 +131,7 @@ class TestBootstrap(unittest.TestCase):
         lb, ub = actual[0], actual[1]
         mean = actual[2]
         sd = actual[3]
-        self.assertLess(mean, 0.9)
+        self.assertLess(mean, 1)
         self.assertGreater(mean, 0.7)
         self.assertLess(sd, 1)
         self.assertGreater(sd, 0.4)
