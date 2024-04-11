@@ -279,8 +279,8 @@ class DML:
 
             # Limits of [-5, 5] allow Beta to range from multiplier of >100x to <0.01x on odds ratio
             # I adjust to allow for larger range to allow for shitty modelling
-            lo = -1000
-            up = 1000
+            lo = -5
+            up = 5
             try:
                 beta0 = root_scalar(g, bracket=[lo, up], method='brentq').root
                 betas.append(beta0)
